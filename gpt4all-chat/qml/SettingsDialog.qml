@@ -5,7 +5,9 @@ import QtQuick.Controls.Basic
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import Qt.labs.folderlistmodel
+import chatlistmodel
 import download
+import modellist
 import network
 import llm
 
@@ -27,18 +29,18 @@ Dialog {
         Network.sendSettingsDialog();
     }
 
-    property var currentChat: LLM.chatListModel.currentChat
+    property var currentChat: ChatListModel.currentChat
 
     Theme {
         id: theme
     }
 
-    property real defaultTemperature: 0.28
-    property real defaultTopP: 0.95
+    property real defaultTemperature: 0.7
+    property real defaultTopP: 0.1
     property int defaultTopK: 40
     property int defaultMaxLength: 4096
-    property int defaultPromptBatchSize: 9
-    property real defaultRepeatPenalty: 1.10
+    property int defaultPromptBatchSize: 128
+    property real defaultRepeatPenalty: 1.18
     property int defaultRepeatPenaltyTokens: 64
     property int defaultThreadCount: 0
     property bool defaultSaveChats: false
@@ -47,7 +49,7 @@ Dialog {
     property string defaultPromptTemplate: "### Human:
 %1
 ### Assistant:\n"
-    property string defaultModelPath: Download.defaultLocalModelsPath()
+    property string defaultModelPath: ModelList.defaultLocalModelsPath()
     property string defaultUserDefaultModel: "Application default"
 
     property alias temperature: settings.temperature
@@ -102,20 +104,20 @@ Dialog {
         settings.saveChatGPTChats = defaultSaveChatGPTChats
         settings.serverChat = defaultServerChat
         settings.userDefaultModel = defaultUserDefaultModel
-        Download.downloadLocalModelsPath = settings.modelPath
+        ModelList.localModelsPath = settings.modelPath
         LLM.threadCount = settings.threadCount
         LLM.serverEnabled = settings.serverChat
-        LLM.chatListModel.shouldSaveChats = settings.saveChats
-        LLM.chatListModel.shouldSaveChatGPTChats = settings.saveChatGPTChats
+        ChatListModel.shouldSaveChats = settings.saveChats
+        ChatListModel.shouldSaveChatGPTChats = settings.saveChatGPTChats
         settings.sync()
     }
 
     Component.onCompleted: {
         LLM.threadCount = settings.threadCount
         LLM.serverEnabled = settings.serverChat
-        LLM.chatListModel.shouldSaveChats = settings.saveChats
-        LLM.chatListModel.shouldSaveChatGPTChats = settings.saveChatGPTChats
-        Download.downloadLocalModelsPath = settings.modelPath
+        ChatListModel.shouldSaveChats = settings.saveChats
+        ChatListModel.shouldSaveChatGPTChats = settings.saveChatGPTChats
+        ModelList.localModelsPath = settings.modelPath
     }
 
     Connections {
@@ -515,13 +517,32 @@ Dialog {
                         Accessible.description: ToolTip.text
                     }
 
-                    Label {
-                        id: promptTemplateLabel
-                        text: qsTr("Prompt Template:")
-                        color: theme.textColor
+                    ColumnLayout {
                         Layout.row: 7
                         Layout.column: 0
+                        Layout.topMargin: 10
+                        Layout.alignment: Qt.AlignTop
+                        spacing: 20
+
+                        Label {
+                            id: promptTemplateLabel
+                            text: qsTr("Prompt Template:")
+                            color: theme.textColor
+                        }
+
+                        Label {
+                            id: promptTemplateLabelHelp
+                            Layout.maximumWidth: promptTemplateLabel.width
+                            visible: settings.promptTemplate.indexOf(
+                                         "%1") === -1
+                            color: theme.textErrorColor
+                            text: qsTr("Must contain the string \"%1\" to be replaced with the user's input.")
+                            wrapMode: TextArea.Wrap
+                            Accessible.role: Accessible.EditableText
+                            Accessible.name: text
+                        }
                     }
+
                     Rectangle {
                         Layout.row: 7
                         Layout.column: 1
@@ -529,20 +550,6 @@ Dialog {
                         height: 200
                         color: "transparent"
                         clip: true
-                        Label {
-                            id: promptTemplateLabelHelp
-                            visible: settings.promptTemplate.indexOf(
-                                         "%1") === -1
-                            font.bold: true
-                            color: theme.textErrorColor
-                            text: qsTr("Prompt template must contain %1 to be replaced with the user's input.")
-                            anchors.fill: templateScrollView
-                            z: 200
-                            padding: 10
-                            wrapMode: TextArea.Wrap
-                            Accessible.role: Accessible.EditableText
-                            Accessible.name: text
-                        }
                         ScrollView {
                             id: templateScrollView
                             anchors.fill: parent
@@ -615,31 +622,21 @@ Dialog {
                         Layout.row: 1
                         Layout.column: 1
                         Layout.minimumWidth: 350
-                        model: modelList
+                        model: ModelList.userDefaultModelList
                         Accessible.role: Accessible.ComboBox
                         Accessible.name: qsTr("ComboBox for displaying/picking the default model")
                         Accessible.description: qsTr("Use this for picking the default model to use; the first item is the current default model")
-                        function updateModel(newModelList) {
-                            var newArray = Array.from(newModelList);
-                            newArray.unshift('Application default');
-                            comboBox.model = newArray;
+                        function updateModel() {
                             settings.sync();
                             comboBox.currentIndex = comboBox.indexOfValue(settingsDialog.userDefaultModel);
-
                         }
                         Component.onCompleted: {
-                            comboBox.updateModel(currentChat.modelList)
+                            comboBox.updateModel()
                         }
                         Connections {
                             target: settings
                             function onUserDefaultModelChanged() {
-                                comboBox.updateModel(currentChat.modelList)
-                            }
-                        }
-                        Connections {
-                            target: currentChat
-                            function onModelListChanged() {
-                                comboBox.updateModel(currentChat.modelList)
+                                comboBox.updateModel()
                             }
                         }
                         onActivated: {
@@ -650,11 +647,11 @@ Dialog {
                     FolderDialog {
                         id: modelPathDialog
                         title: "Please choose a directory"
-                        currentFolder: "file://" + Download.downloadLocalModelsPath
+                        currentFolder: "file://" + ModelList.localModelsPath
                         onAccepted: {
                             modelPathDisplayField.text = selectedFolder
-                            Download.downloadLocalModelsPath = modelPathDisplayField.text
-                            settings.modelPath = Download.downloadLocalModelsPath
+                            ModelList.localModelsPath = modelPathDisplayField.text
+                            settings.modelPath = ModelList.localModelsPath
                             settings.sync()
                         }
                     }
@@ -667,7 +664,7 @@ Dialog {
                     }
                     MyDirectoryField {
                         id: modelPathDisplayField
-                        text: Download.downloadLocalModelsPath
+                        text: ModelList.localModelsPath
                         implicitWidth: 300
                         Layout.row: 2
                         Layout.column: 1
@@ -679,11 +676,11 @@ Dialog {
                         Accessible.description: ToolTip.text
                         onEditingFinished: {
                             if (isValid) {
-                                Download.downloadLocalModelsPath = modelPathDisplayField.text
-                                settings.modelPath = Download.downloadLocalModelsPath
+                                ModelList.localModelsPath = modelPathDisplayField.text
+                                settings.modelPath = ModelList.localModelsPath
                                 settings.sync()
                             } else {
-                                text = Download.downloadLocalModelsPath
+                                text = ModelList.localModelsPath
                             }
                         }
                     }
@@ -741,7 +738,7 @@ Dialog {
                         onClicked: {
                             Network.sendSaveChatsToggled(saveChatsBox.checked);
                             settingsDialog.saveChats = saveChatsBox.checked
-                            LLM.chatListModel.shouldSaveChats = saveChatsBox.checked
+                            ChatListModel.shouldSaveChats = saveChatsBox.checked
                             settings.sync()
                         }
                         ToolTip.text: qsTr("WARNING: Saving chats to disk can be ~2GB per chat")
@@ -761,13 +758,13 @@ Dialog {
                         checked: settingsDialog.saveChatGPTChats
                         onClicked: {
                             settingsDialog.saveChatGPTChats = saveChatGPTChatsBox.checked
-                            LLM.chatListModel.shouldSaveChatGPTChats = saveChatGPTChatsBox.checked
+                            ChatListModel.shouldSaveChatGPTChats = saveChatGPTChatsBox.checked
                             settings.sync()
                         }
                     }
                     Label {
                         id: serverChatLabel
-                        text: qsTr("Enable web server:")
+                        text: qsTr("Enable API server:")
                         color: theme.textColor
                         Layout.row: 6
                         Layout.column: 0
@@ -782,12 +779,56 @@ Dialog {
                             LLM.serverEnabled = serverChatBox.checked
                             settings.sync()
                         }
-                        ToolTip.text: qsTr("WARNING: This enables the gui to act as a local web server for AI API requests and will increase your RAM usage as well")
+                        ToolTip.text: qsTr("WARNING: This enables the gui to act as a local REST web server(OpenAI API compliant) for API requests and will increase your RAM usage as well")
                         ToolTip.visible: hovered
                     }
-                    MyButton {
+                    Rectangle {
                         Layout.row: 7
+                        Layout.column: 0
+                        Layout.columnSpan: 3
+                        Layout.fillWidth: true
+                        height: 1
+                        color: theme.dialogBorder
+                    }
+                    Rectangle {
+                        Layout.row: 9
+                        Layout.column: 0
+                        Layout.fillWidth: true
+                        Layout.columnSpan: 3
+                        height: 1
+                        color: theme.dialogBorder
+                    }
+                    Label {
+                        id: gpuOverrideLabel
+                        text: qsTr("Force Metal (macOS+arm):")
+                        color: theme.textColor
+                        Layout.row: 8
+                        Layout.column: 0
+                    }
+                    RowLayout {
+                        Layout.row: 8
                         Layout.column: 1
+                        Layout.columnSpan: 2
+                        MyCheckBox {
+                            id: gpuOverrideBox
+                            checked: false
+                            onClicked: {
+                                // fixme
+                            }
+                        }
+                        Label {
+                            id: warningLabel
+                            Layout.maximumWidth: 730
+                            Layout.alignment: Qt.AlignTop
+                            color: theme.textErrorColor
+                            wrapMode: Text.WordWrap
+                            text: qsTr("WARNING: This setting forces usage of the GPU if it is detected. Can cause a crash if the model requires more RAM than the OS + GPU supports.")
+                        }
+                    }
+                    MyButton {
+                        Layout.row: 10
+                        Layout.column: 1
+                        Layout.columnSpan: 2
                         Layout.fillWidth: true
                         text: qsTr("Restore Defaults")
                         Accessible.description: qsTr("Restores the settings dialog to a default state")
